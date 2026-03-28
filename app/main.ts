@@ -6,10 +6,13 @@ const rl = createInterface({
   prompt: "$ ",
 });
 
-// TODO: Uncomment the code below to pass the first stage
 rl.prompt();
 
 rl.on('line', (command) => {
+  if (command === 'exit') {
+    rl.close();
+    return;
+  }
   console.log(`${command}: command not found`);
   rl.prompt();
 });
