@@ -6,14 +6,26 @@ const rl = createInterface({
   prompt: "$ ",
 });
 
+const builtin_functions = new Set(['exit', 'echo', 'type']);
+
 rl.prompt();
 
-rl.on('line', (command) => {
+rl.on('line', (input) => {
+  const arrCommand = input.split(' ');
+  const command = arrCommand[0];
+
   if (command === 'exit') {
     rl.close();
     return;
-  } else if (command.split(' ')[0] === 'echo') {
-    console.log(command.split(' ').slice(1).join(' '));
+  } else if (command === 'echo') {
+    console.log(arrCommand.slice(1).join(' '));
+  } else if (command === 'type') {
+    const commandType = arrCommand[1];
+    if (builtin_functions.has(commandType)) {
+      console.log(`${commandType} is a shell builtin`);
+    } else {
+      console.log(`${commandType}: not found`);
+    }
   } else {
     console.log(`${command}: command not found`);
   }
