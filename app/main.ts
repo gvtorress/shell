@@ -15,7 +15,7 @@ const paths = process.env.PATH?.split(path.delimiter) || '';
 rl.prompt();
 
 rl.on('line', async (input) => {
-  if (input === '') {
+  if (input.trim() === '') {
     rl.prompt();
     return;
   }
@@ -31,12 +31,12 @@ rl.on('line', async (input) => {
       rl.prompt();
       return;
     } else {
-      rl.pause();
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      // rl.pause();
+      // if (process.stdin.isTTY) process.stdin.setRawMode(false);
       const child = ChildProcess.spawn(commandPath, args, { stdio: 'inherit' });
 
       child.on('close', () => {
-        process.stdin.setRawMode(true);
+        // process.stdin.setRawMode(true);
         rl.prompt();
       });
       return;
