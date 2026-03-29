@@ -21,8 +21,7 @@ rl.on('line', async (input) => {
   }
 
   const arrCommand = input.trim().split(/\s+/);
-  const command = arrCommand[0];
-  const args = arrCommand.slice(1);
+  const [command, ...args] = arrCommand;
 
   if (!builtinFunctions.has(command)) {
     const commandPath = await findPath(command);
@@ -31,12 +30,12 @@ rl.on('line', async (input) => {
       rl.prompt();
       return;
     } else {
-      // rl.pause();
-      // if (process.stdin.isTTY) process.stdin.setRawMode(false);
-      const child = ChildProcess.spawn(commandPath, args, { stdio: 'inherit' });
+      rl.pause();
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      const child = ChildProcess.spawn(commandPath, args, { argv0: command, stdio: 'inherit' });
 
       child.on('close', () => {
-        // process.stdin.setRawMode(true);
+        process.stdin.setRawMode(true);
         rl.prompt();
       });
       return;
