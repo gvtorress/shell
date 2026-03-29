@@ -9,7 +9,7 @@ const rl = createInterface({
 });
 
 const builtinFunctions = new Set(['exit', 'echo', 'type']);
-const PATH = "/usr/bin:/usr/local/bin:$PATH"
+const PATH = process.env.PATH || '';
 
 rl.prompt();
 
