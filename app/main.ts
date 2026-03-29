@@ -1,6 +1,7 @@
 import path from "path";
 import * as fs from "fs/promises"
 import { createInterface } from "readline";
+import { spawn } from "child_process";
 
 const rl = createInterface({
   input: process.stdin,
@@ -18,9 +19,13 @@ rl.on('line', async (input) => {
   const command = arrCommand[0];
 
   if (!builtinFunctions.has(command)) {
-    console.log(`${command}: command not found`);
-    rl.prompt();
-    return;
+    if (!(await isExecutablePath(command))) {
+      console.log(`${command}: command not found`);
+      rl.prompt();
+      return;
+    } else {
+      spawn(command, arrCommand.slice(1));
+    }
   }
 
   if (command === 'exit') {
@@ -47,6 +52,11 @@ rl.on('line', async (input) => {
 
   rl.prompt();
 });
+
+const isExecutablePath = async (command: string): Promise<boolean> => {
+  const commandPath = await findPath(command);
+  return !!commandPath
+}
 
 const findPath = async (command: string): Promise<string | undefined> => {
   const delimiter = path.delimiter;
