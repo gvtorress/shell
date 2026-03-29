@@ -9,7 +9,7 @@ const rl = createInterface({
   prompt: "$ ",
 });
 
-const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd']);
+const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd', 'cd']);
 const paths = process.env.PATH?.split(path.delimiter) || '';
 
 rl.prompt();
@@ -53,6 +53,14 @@ rl.on('line', async (input) => {
 
   if (command === 'pwd') {
     console.log(process.cwd());
+  }
+
+  if (command === 'cd') {
+    try {
+      process.chdir(args[0]);
+    } catch {
+      console.log(`${command}: ${args[0]}: No such file or directory`);
+    }
   }
 
   if (command === 'type') {
