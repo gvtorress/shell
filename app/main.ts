@@ -1,7 +1,7 @@
 import path from "path";
 import * as fs from "fs/promises"
 import { createInterface } from "readline";
-import { spawn } from "child_process";
+import ChildProcess from "child_process";
 
 const rl = createInterface({
   input: process.stdin,
@@ -24,7 +24,14 @@ rl.on('line', async (input) => {
       rl.prompt();
       return;
     } else {
-      spawn(command, arrCommand.slice(1));
+      const child_process = ChildProcess.spawn(command, arrCommand.slice(1));
+      child_process.stdout.pipe(process.stdout);
+      child_process.stderr.pipe(process.stderr);
+
+      child_process.on('close', () => {
+        rl.prompt();
+      });
+      return;
     }
   }
 
