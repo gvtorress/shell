@@ -21,7 +21,6 @@ rl.on('line', async (input) => {
   }
 
   const arrCommand = input.trim().split(/\s+/);
-  console.log(arrCommand);
   const command = arrCommand[0];
   const args = arrCommand.slice(1);
 
@@ -54,7 +53,6 @@ rl.on('line', async (input) => {
   }
 
   if (command === 'pwd') {
-    console.log(command);
     console.log(process.cwd());
   }
 
