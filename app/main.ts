@@ -1,3 +1,4 @@
+import * as os from 'os';
 import path from "path";
 import * as fs from "fs/promises"
 import { createInterface } from "readline";
@@ -11,6 +12,7 @@ const rl = createInterface({
 
 const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd', 'cd']);
 const paths = process.env.PATH?.split(path.delimiter) || '';
+const home = os.homedir();
 
 rl.prompt();
 
@@ -56,10 +58,14 @@ rl.on('line', async (input) => {
   }
 
   if (command === 'cd') {
+    let newDir = args[0] || '~';
+    if (newDir.startsWith('~')) {
+      newDir = newDir.replace('~', `${home}/`);
+    }
     try {
-      process.chdir(args[0]);
+      process.chdir(newDir);
     } catch {
-      console.log(`${command}: ${args[0]}: No such file or directory`);
+      console.log(`${command}: ${newDir}: No such file or directory`);
     }
   }
 
