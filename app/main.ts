@@ -13,6 +13,7 @@ const rl = createInterface({
 const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd', 'cd']);
 const paths = process.env.PATH?.split(path.delimiter) || '';
 const home = os.homedir();
+const inputRegex = /(?:'[^']*'|[^\s'])+/g;
 
 rl.prompt();
 
@@ -22,7 +23,7 @@ rl.on('line', async (input) => {
     return;
   }
 
-  const arrCommand = input.trim().split(/\s+/);
+  const arrCommand = input.match(inputRegex)?.map(arg => arg.replace(/'/g, "")) ?? [];
   const [command, ...args] = arrCommand;
 
   if (!builtinFunctions.has(command)) {
@@ -58,10 +59,7 @@ rl.on('line', async (input) => {
   }
 
   if (command === 'cd') {
-    let newDir = args[0] || '~';
-    if (newDir.startsWith('~')) {
-      newDir = newDir.replace('~', `${home}/`);
-    }
+    const newDir = resolveCdPath(args[0]);
     try {
       process.chdir(newDir);
     } catch {
@@ -106,4 +104,12 @@ const isValidExecutable = async (filePath: string): Promise<boolean> => {
   } catch {
     return false;
   }
+}
+
+const resolveCdPath = (input?: string): string => {
+  if (!input || input === '~') return home;
+
+  if (input.startsWith('~/')) return path.join(home, input.slice(2));
+
+  return input;
 }
