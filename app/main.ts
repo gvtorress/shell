@@ -4,6 +4,8 @@ import * as fs from "fs/promises"
 import { createInterface } from "readline";
 import ChildProcess from "child_process";
 
+type ParserState = 'normal' | 'single' | 'double';
+
 const rl = createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -18,12 +20,13 @@ const inputRegex = /(?:'[^']*'|[^\s'])+/g;
 rl.prompt();
 
 rl.on('line', async (input) => {
-  if (input.trim() === '') {
+  const inputTrimmed = input.trim();
+  if (inputTrimmed === '') {
     rl.prompt();
     return;
   }
 
-  const arrCommand = input.match(inputRegex)?.map(arg => arg.replace(/'/g, "")) ?? [];
+  const arrCommand = commandParser(inputTrimmed);
   const [command, ...args] = arrCommand;
 
   if (!builtinFunctions.has(command)) {
@@ -112,4 +115,47 @@ const resolveCdPath = (input?: string): string => {
   if (input.startsWith('~/')) return path.join(home, input.slice(2));
 
   return input;
+}
+
+const commandParser = (input: string): string[] => {
+  const args: string[] = [];
+  let current = '';
+  let state: ParserState = 'normal';
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    if (state === 'normal') {
+      if (char === ' ') {
+        if (current.length > 0) {
+          args.push(current);
+          current = '';
+        }
+        continue;
+      }
+
+      if (char === "'") {
+        state = 'single';
+        continue;
+      }
+
+      if (char === '"') {
+        state = 'double';
+        continue;
+      }
+    }
+
+    if (
+      (state === 'single' && char === "'")
+        || (state === 'double' && char === '"')
+    ) {
+      state = 'normal';
+      continue;
+    }
+  
+    current += char;
+  }
+
+  if (current.length > 0) args.push(current);
+
+  return args;
 }
