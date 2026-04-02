@@ -1,10 +1,10 @@
 import * as os from 'os';
-import path from "path";
-import * as fs from "fs/promises"
-import { createInterface } from "readline";
-import ChildProcess from "child_process";
+import path from 'path';
+import * as fs from 'fs/promises'
+import { createInterface } from 'readline';
+import ChildProcess from 'child_process';
 
-type ParserState = 'normal' | 'single' | 'double';
+type ParserState = 'normal' | 'single' | 'double' | 'escape';
 
 const rl = createInterface({
   input: process.stdin,
@@ -15,7 +15,6 @@ const rl = createInterface({
 const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd', 'cd']);
 const paths = process.env.PATH?.split(path.delimiter) || '';
 const home = os.homedir();
-const inputRegex = /(?:'[^']*'|[^\s'])+/g;
 
 rl.prompt();
 
@@ -125,6 +124,11 @@ const commandParser = (input: string): string[] => {
     const char = input[i];
 
     if (state === 'normal') {
+      if (char === '\\') {
+        state = 'escape';
+        continue;
+      }
+
       if (char === ' ') {
         if (current.length > 0) {
           args.push(current);
@@ -151,6 +155,8 @@ const commandParser = (input: string): string[] => {
       state = 'normal';
       continue;
     }
+
+    if (state === 'escape') state = 'normal';
   
     current += char;
   }
