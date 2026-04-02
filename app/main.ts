@@ -4,7 +4,7 @@ import * as fs from 'fs/promises'
 import { createInterface } from 'readline';
 import ChildProcess from 'child_process';
 
-type ParserState = 'normal' | 'single' | 'double' | 'escape';
+type ParserState = 'normal' | 'single' | 'double';
 
 const rl = createInterface({
   input: process.stdin,
@@ -120,43 +120,59 @@ const commandParser = (input: string): string[] => {
   const args: string[] = [];
   let current = '';
   let state: ParserState = 'normal';
+  let escape = false;
   for (let i = 0; i < input.length; i++) {
     const char = input[i];
 
     if (state === 'normal') {
-      if (char === '\\') {
-        state = 'escape';
-        continue;
-      }
-
-      if (char === ' ') {
-        if (current.length > 0) {
-          args.push(current);
-          current = '';
+      if (!escape) {
+        if (char === '\\') {
+          escape = true;
+          continue;
         }
-        continue;
+  
+        if (char === ' ') {
+          if (current.length > 0) {
+            args.push(current);
+            current = '';
+          }
+          continue;
+        }
+  
+        if (char === "'") {
+          state = 'single';
+          continue;
+        }
+  
+        if (char === '"') {
+          state = 'double';
+          continue;
+        }
       }
+    }
 
+    if (state === 'single') {
       if (char === "'") {
-        state = 'single';
-        continue;
-      }
-
-      if (char === '"') {
-        state = 'double';
+        state = 'normal';
         continue;
       }
     }
 
-    if (
-      (state === 'single' && char === "'")
-        || (state === 'double' && char === '"')
-    ) {
-      state = 'normal';
-      continue;
+    if (state === 'double') {
+      if (!escape) {
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+  
+        if (char === '"') {
+          state = 'normal';
+          continue;
+        }
+      }
     }
 
-    if (state === 'escape') state = 'normal';
+    if (escape) escape = false;
   
     current += char;
   }
