@@ -146,6 +146,10 @@ const commandParser = (input: string): parsedInput => {
         }
 
         if (char === '>') {
+          if (current.length > 0) {
+            if (current !== '1') args.push(current);
+            current = '';
+          }
           isRedirect = true;
           continue;
         }
