@@ -10,6 +10,7 @@ interface parsedInput {
   command: string;
   args: string[];
   stdoutRedirect?: string;
+  stderrRedirect?: string;
 }
 
 const rl = createInterface({
@@ -21,6 +22,7 @@ const rl = createInterface({
 const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd', 'cd']);
 const paths = process.env.PATH?.split(path.delimiter) || '';
 const home = os.homedir();
+let terminalEndsWithNewline = true;
 
 rl.prompt();
 
@@ -31,12 +33,12 @@ rl.on('line', async (input: string) => {
     return;
   }
 
-  const { command, args, stdoutRedirect } = commandParser(inputTrimmed);
+  const { command, args, stdoutRedirect, stderrRedirect } = commandParser(inputTrimmed);
 
   if (!builtinFunctions.has(command)) {
     const commandPath = await findPath(command);
     if (!commandPath) {
-      writeStdErr(`${command}: command not found`);
+      writeStdErr(`${command}: command not found`, stderrRedirect);
       rl.prompt();
       return;
     } else {
@@ -44,8 +46,13 @@ rl.on('line', async (input: string) => {
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
 
       try {
-        await runExternalCommand(commandPath, command, args, stdoutRedirect);
+        await runExternalCommand(commandPath, command, args, stdoutRedirect, stderrRedirect);
       } finally {
+        if (!terminalEndsWithNewline) {
+          process.stdout.write('\n');
+          terminalEndsWithNewline = true;
+        }
+
         if (process.stdin.isTTY) process.stdin.setRawMode(true);
         rl.resume();
         rl.prompt();
@@ -60,11 +67,13 @@ rl.on('line', async (input: string) => {
   }
 
   if (command === 'echo') {
-    await writeStdOut(args.join(' '), stdoutRedirect);
+    await writeStdOut(args.join(' '), stdoutRedirect, stderrRedirect);
+    if (stderrRedirect) await writeStdErr('', stderrRedirect);
   }
 
   if (command === 'pwd') {
-    await writeStdOut(process.cwd(), stdoutRedirect);
+    await writeStdOut(process.cwd(), stdoutRedirect, stderrRedirect);
+    if (stderrRedirect) await writeStdErr('', stderrRedirect);
   }
 
   if (command === 'cd') {
@@ -72,7 +81,7 @@ rl.on('line', async (input: string) => {
     try {
       process.chdir(newDir);
     } catch {
-      writeStdErr(`${command}: ${newDir}: No such file or directory`);
+      writeStdErr(`${command}: ${newDir}: No such file or directory`, stderrRedirect);
     }
   }
 
@@ -82,14 +91,14 @@ rl.on('line', async (input: string) => {
 
       for (const commandType of arrCommandType) {
         if (builtinFunctions.has(commandType)) {
-          await writeStdOut(`${commandType} is a shell builtin`, stdoutRedirect);
+          await writeStdOut(`${commandType} is a shell builtin`, stdoutRedirect, stderrRedirect);
         } else {
           const commandPath = await findPath(commandType);
 
           if (commandPath) {
-            await writeStdOut(`${commandType} is ${commandPath}`, stdoutRedirect);
+            await writeStdOut(`${commandType} is ${commandPath}`, stdoutRedirect, stderrRedirect);
           } else {
-            writeStdErr(`${commandType}: not found`);
+            writeStdErr(`${commandType}: not found`, stderrRedirect);
           }
         }
       }
@@ -130,11 +139,13 @@ const resolveCdPath = (input?: string): string => {
 
 const commandParser = (input: string): parsedInput => {
   const args: string[] = [];
-  let redirection;
+  let stdoutRedirect;
+  let stderrRedirect;
   let current = '';
   let state: ParserState = 'normal';
   let escape = false;
-  let isRedirect = false;
+  let isStdoutRedirect = false;
+  let isStderrRedirect = false;
   for (let i = 0; i < input.length; i++) {
     const char = input[i];
 
@@ -146,19 +157,24 @@ const commandParser = (input: string): parsedInput => {
         }
 
         if (char === '>') {
-          if (current.length > 0) {
-            if (current !== '1') args.push(current);
-            current = '';
-          }
-          isRedirect = true;
+          isStdoutRedirect = current === '1' || current === '';
+          isStderrRedirect = current === '2';
+
+          if (current.length >= 2) args.push(current);
+
+          current = '';
+
           continue;
         }
   
         if (char === ' ') {
           if (current.length > 0) {
-            if (isRedirect) {
-              redirection = current;
-              isRedirect = false;
+            if (isStdoutRedirect) {
+              stdoutRedirect = current;
+              isStdoutRedirect = false;
+            } else if (isStderrRedirect) {
+              stderrRedirect = current;
+              isStderrRedirect = false;
             } else {
               args.push(current);
             }
@@ -206,9 +222,12 @@ const commandParser = (input: string): parsedInput => {
   }
 
   if (current.length > 0) {
-    if (isRedirect) {
-      redirection = current;
-      isRedirect = false;
+    if (isStdoutRedirect) {
+      stdoutRedirect = current;
+      isStdoutRedirect = false;
+    } else if (isStderrRedirect) {
+      stderrRedirect = current;
+      isStderrRedirect = false;
     } else {
       args.push(current);
     }
@@ -219,27 +238,36 @@ const commandParser = (input: string): parsedInput => {
   const parsedObject = {
     command,
     args: arrArgs,
-    stdoutRedirect: redirection,
+    stdoutRedirect,
+    stderrRedirect,
   }
 
   return parsedObject;
 }
 
-const writeStdOut = async (content: string, stdoutFile?: string) => {
-  const contentWithLineBreak = `${content}\n`
+const writeStdOut = async (content: string, stdoutFile?: string, stderrFile?: string) => {
   if (stdoutFile) {
     try {
-      await fs.writeFile(stdoutFile, contentWithLineBreak);
+      await fs.writeFile(stdoutFile, content);
     } catch (err) {
-      if (err instanceof Error) writeStdErr(err.message);
+      if (err instanceof Error) await writeStdErr(err.message, stderrFile);
     }
     return;
   }
 
-  process.stdout.write(contentWithLineBreak);
+  process.stdout.write(`${content}\n`);
 }
 
-const writeStdErr = (content: string) => {
+const writeStdErr = async (content: string, stderrFile?: string) => {
+  if (stderrFile) {
+    try {
+      await fs.writeFile(stderrFile, content);
+    } catch (err) {
+      if (err instanceof Error) process.stderr.write(err.message);
+    }
+    return;
+  }
+
   process.stderr.write(`${content}\n`);
 }
 
@@ -248,18 +276,49 @@ const runExternalCommand = async (
   command: string,
   args: string[],
   stdoutRedirect?: string,
+  stderrRedirect?: string,
 ): Promise<void> => {
   let outputFile: fs.FileHandle | undefined;
+  let errOutputFile: fs.FileHandle | undefined;
 
+  
   try {
-    const stdio: Array<'inherit' | number> = ['inherit', 'inherit', 'inherit'];
+    const child = ChildProcess.spawn(commandPath, args, {
+      argv0: command,
+      stdio: ['inherit', 'pipe', 'pipe'],
+    });
 
-    if (stdoutRedirect) {
-      outputFile = await fs.open(stdoutRedirect, 'w');
-      stdio[1] = outputFile.fd;
+    if (child.stdout) {
+      if (stdoutRedirect) {
+        outputFile = await fs.open(stdoutRedirect, 'w');
+
+        child.stdout.on('data', (chunk) => {
+          outputFile?.write(chunk);
+        });
+
+      } else {
+        child.stdout.on('data', (chunk) => {
+          process.stdout.write(chunk);
+          updateTerminalLineState(chunk);
+        });
+      }
     }
 
-    const child = ChildProcess.spawn(commandPath, args, { argv0: command, stdio });
+    if (child.stderr) {
+      if (stderrRedirect) {
+        errOutputFile = await fs.open(stderrRedirect, 'w');
+
+        child.stderr.on('data', (chunk) => {
+          errOutputFile?.write(chunk);
+        });
+
+      } else {
+        child.stderr.on('data', (chunk) => {
+          process.stderr.write(chunk);
+          updateTerminalLineState(chunk);
+        });
+      }
+    }
 
     await new Promise<void>((resolve, reject) => {
       child.on('error', reject);
@@ -267,5 +326,11 @@ const runExternalCommand = async (
     });
   } finally {
     await outputFile?.close();
+    await errOutputFile?.close();
   }
+}
+
+const updateTerminalLineState = (chunk: Buffer | string) => {
+  const text = chunk.toString();
+  terminalEndsWithNewline = text.endsWith('\n');
 }
