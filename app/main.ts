@@ -6,6 +6,12 @@ import ChildProcess from 'child_process';
 
 type ParserState = 'normal' | 'single' | 'double';
 
+interface parsedInput {
+  command: string;
+  args: string[];
+  stdoutRedirect?: string;
+}
+
 const rl = createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -18,31 +24,32 @@ const home = os.homedir();
 
 rl.prompt();
 
-rl.on('line', async (input) => {
+rl.on('line', async (input: string) => {
   const inputTrimmed = input.trim();
   if (inputTrimmed === '') {
     rl.prompt();
     return;
   }
 
-  const arrCommand = commandParser(inputTrimmed);
-  const [command, ...args] = arrCommand;
+  const { command, args, stdoutRedirect } = commandParser(inputTrimmed);
 
   if (!builtinFunctions.has(command)) {
     const commandPath = await findPath(command);
     if (!commandPath) {
-      console.log(`${command}: command not found`);
+      writeStdErr(`${command}: command not found`);
       rl.prompt();
       return;
     } else {
       rl.pause();
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
-      const child = ChildProcess.spawn(commandPath, args, { argv0: command, stdio: 'inherit' });
 
-      child.on('close', () => {
-        process.stdin.setRawMode(true);
+      try {
+        await runExternalCommand(commandPath, command, args, stdoutRedirect);
+      } finally {
+        if (process.stdin.isTTY) process.stdin.setRawMode(true);
+        rl.resume();
         rl.prompt();
-      });
+      }
       return;
     }
   }
@@ -53,11 +60,11 @@ rl.on('line', async (input) => {
   }
 
   if (command === 'echo') {
-    console.log(args.join(' '));
+    await writeStdOut(args.join(' '), stdoutRedirect);
   }
 
   if (command === 'pwd') {
-    console.log(process.cwd());
+    await writeStdOut(process.cwd(), stdoutRedirect);
   }
 
   if (command === 'cd') {
@@ -65,20 +72,25 @@ rl.on('line', async (input) => {
     try {
       process.chdir(newDir);
     } catch {
-      console.log(`${command}: ${newDir}: No such file or directory`);
+      writeStdErr(`${command}: ${newDir}: No such file or directory`);
     }
   }
 
   if (command === 'type') {
-    if (arrCommand.length > 1) {
+    if (args.length >= 1) {
       const arrCommandType = args;
-      
+
       for (const commandType of arrCommandType) {
         if (builtinFunctions.has(commandType)) {
-          console.log(`${commandType} is a shell builtin`);
+          await writeStdOut(`${commandType} is a shell builtin`, stdoutRedirect);
         } else {
           const commandPath = await findPath(commandType);
-          commandPath ? console.log(`${commandType} is ${commandPath}`) : console.log(`${commandType}: not found`);
+
+          if (commandPath) {
+            await writeStdOut(`${commandType} is ${commandPath}`, stdoutRedirect);
+          } else {
+            writeStdErr(`${commandType}: not found`);
+          }
         }
       }
     }
@@ -116,11 +128,13 @@ const resolveCdPath = (input?: string): string => {
   return input;
 }
 
-const commandParser = (input: string): string[] => {
+const commandParser = (input: string): parsedInput => {
   const args: string[] = [];
+  let redirection;
   let current = '';
   let state: ParserState = 'normal';
   let escape = false;
+  let isRedirect = false;
   for (let i = 0; i < input.length; i++) {
     const char = input[i];
 
@@ -130,10 +144,20 @@ const commandParser = (input: string): string[] => {
           escape = true;
           continue;
         }
+
+        if (char === '>') {
+          isRedirect = true;
+          continue;
+        }
   
         if (char === ' ') {
           if (current.length > 0) {
-            args.push(current);
+            if (isRedirect) {
+              redirection = current;
+              isRedirect = false;
+            } else {
+              args.push(current);
+            }
             current = '';
           }
           continue;
@@ -177,7 +201,67 @@ const commandParser = (input: string): string[] => {
     current += char;
   }
 
-  if (current.length > 0) args.push(current);
+  if (current.length > 0) {
+    if (isRedirect) {
+      redirection = current;
+      isRedirect = false;
+    } else {
+      args.push(current);
+    }
+  }
 
-  return args;
+  const [command, ...arrArgs] = args;
+
+  const parsedObject = {
+    command,
+    args: arrArgs,
+    stdoutRedirect: redirection,
+  }
+
+  return parsedObject;
+}
+
+const writeStdOut = async (content: string, stdoutFile?: string) => {
+  const contentWithLineBreak = `${content}\n`
+  if (stdoutFile) {
+    try {
+      await fs.writeFile(stdoutFile, contentWithLineBreak);
+    } catch (err) {
+      if (err instanceof Error) writeStdErr(err.message);
+    }
+    return;
+  }
+
+  process.stdout.write(contentWithLineBreak);
+}
+
+const writeStdErr = (content: string) => {
+  process.stderr.write(`${content}\n`);
+}
+
+const runExternalCommand = async (
+  commandPath: string,
+  command: string,
+  args: string[],
+  stdoutRedirect?: string,
+): Promise<void> => {
+  let outputFile: fs.FileHandle | undefined;
+
+  try {
+    const stdio: Array<'inherit' | number> = ['inherit', 'inherit', 'inherit'];
+
+    if (stdoutRedirect) {
+      outputFile = await fs.open(stdoutRedirect, 'w');
+      stdio[1] = outputFile.fd;
+    }
+
+    const child = ChildProcess.spawn(commandPath, args, { argv0: command, stdio });
+
+    await new Promise<void>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', () => resolve());
+    });
+  } finally {
+    await outputFile?.close();
+  }
 }
