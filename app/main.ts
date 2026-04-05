@@ -9,6 +9,7 @@ type ParserState = 'normal' | 'single' | 'double';
 interface parsedInput {
   command: string;
   args: string[];
+  isAppend: boolean;
   stdoutRedirect?: string;
   stderrRedirect?: string;
 }
@@ -33,12 +34,14 @@ rl.on('line', async (input: string) => {
     return;
   }
 
-  const { command, args, stdoutRedirect, stderrRedirect } = commandParser(inputTrimmed);
+  const {
+    command, args, stdoutRedirect, stderrRedirect, isAppend,
+  } = commandParser(inputTrimmed);
 
   if (!builtinFunctions.has(command)) {
     const commandPath = await findPath(command);
     if (!commandPath) {
-      writeStdErr(`${command}: command not found`, stderrRedirect);
+      writeStdErr(`${command}: command not found\n`, isAppend, stderrRedirect);
       rl.prompt();
       return;
     } else {
@@ -46,7 +49,7 @@ rl.on('line', async (input: string) => {
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
 
       try {
-        await runExternalCommand(commandPath, command, args, stdoutRedirect, stderrRedirect);
+        await runExternalCommand(commandPath, command, args, isAppend, stdoutRedirect, stderrRedirect);
       } finally {
         if (!terminalEndsWithNewline) {
           process.stdout.write('\n');
@@ -67,13 +70,13 @@ rl.on('line', async (input: string) => {
   }
 
   if (command === 'echo') {
-    await writeStdOut(args.join(' '), stdoutRedirect, stderrRedirect);
-    if (stderrRedirect) await writeStdErr('', stderrRedirect);
+    await writeStdOut(`${args.join(' ')}\n`, isAppend, stdoutRedirect, stderrRedirect);
+    if (stderrRedirect) await writeStdErr('', isAppend, stderrRedirect);
   }
 
   if (command === 'pwd') {
-    await writeStdOut(process.cwd(), stdoutRedirect, stderrRedirect);
-    if (stderrRedirect) await writeStdErr('', stderrRedirect);
+    await writeStdOut(`${process.cwd()}\n`, isAppend, stdoutRedirect, stderrRedirect);
+    if (stderrRedirect) await writeStdErr('', isAppend, stderrRedirect);
   }
 
   if (command === 'cd') {
@@ -81,7 +84,7 @@ rl.on('line', async (input: string) => {
     try {
       process.chdir(newDir);
     } catch {
-      writeStdErr(`${command}: ${newDir}: No such file or directory`, stderrRedirect);
+      writeStdErr(`${command}: ${newDir}: No such file or directory\n`, isAppend, stderrRedirect);
     }
   }
 
@@ -91,14 +94,14 @@ rl.on('line', async (input: string) => {
 
       for (const commandType of arrCommandType) {
         if (builtinFunctions.has(commandType)) {
-          await writeStdOut(`${commandType} is a shell builtin`, stdoutRedirect, stderrRedirect);
+          await writeStdOut(`${commandType} is a shell builtin\n`, isAppend, stdoutRedirect, stderrRedirect);
         } else {
           const commandPath = await findPath(commandType);
 
           if (commandPath) {
-            await writeStdOut(`${commandType} is ${commandPath}`, stdoutRedirect, stderrRedirect);
+            await writeStdOut(`${commandType} is ${commandPath}\n`, isAppend, stdoutRedirect, stderrRedirect);
           } else {
-            writeStdErr(`${commandType}: not found`, stderrRedirect);
+            writeStdErr(`${commandType}: not found\n`, isAppend, stderrRedirect);
           }
         }
       }
@@ -146,6 +149,7 @@ const commandParser = (input: string): parsedInput => {
   let escape = false;
   let isStdoutRedirect = false;
   let isStderrRedirect = false;
+  let isAppend = false;
   for (let i = 0; i < input.length; i++) {
     const char = input[i];
 
@@ -157,6 +161,7 @@ const commandParser = (input: string): parsedInput => {
         }
 
         if (char === '>') {
+          isAppend = input[i - 1] === '>';
           isStdoutRedirect = current === '1' || current === '';
           isStderrRedirect = current === '2';
 
@@ -240,48 +245,57 @@ const commandParser = (input: string): parsedInput => {
     args: arrArgs,
     stdoutRedirect,
     stderrRedirect,
+    isAppend,
   }
 
   return parsedObject;
 }
 
-const writeStdOut = async (content: string, stdoutFile?: string, stderrFile?: string) => {
+const writeStdOut = async (content: string, isAppend: boolean, stdoutFile?: string, stderrFile?: string) => {
   if (stdoutFile) {
     try {
-      await fs.writeFile(stdoutFile, content);
+      if (isAppend) {
+        await fs.appendFile(stdoutFile, content);
+      } else {
+        await fs.writeFile(stdoutFile, content);
+      }
     } catch (err) {
-      if (err instanceof Error) await writeStdErr(err.message, stderrFile);
+      if (err instanceof Error) await writeStdErr(`${err.message}\n`, isAppend, stderrFile);
     }
     return;
   }
 
-  process.stdout.write(`${content}\n`);
+  process.stdout.write(content);
 }
 
-const writeStdErr = async (content: string, stderrFile?: string) => {
+const writeStdErr = async (content: string, isAppend: boolean, stderrFile?: string) => {
   if (stderrFile) {
     try {
-      await fs.writeFile(stderrFile, content);
+      if (isAppend) {
+        await fs.appendFile(stderrFile, content);
+      } else {
+        await fs.writeFile(stderrFile, content);
+      }
     } catch (err) {
       if (err instanceof Error) process.stderr.write(err.message);
     }
     return;
   }
 
-  process.stderr.write(`${content}\n`);
+  process.stderr.write(content);
 }
 
 const runExternalCommand = async (
   commandPath: string,
   command: string,
   args: string[],
+  isAppend: boolean,
   stdoutRedirect?: string,
   stderrRedirect?: string,
 ): Promise<void> => {
   let outputFile: fs.FileHandle | undefined;
   let errOutputFile: fs.FileHandle | undefined;
 
-  
   try {
     const child = ChildProcess.spawn(commandPath, args, {
       argv0: command,
@@ -290,10 +304,14 @@ const runExternalCommand = async (
 
     if (child.stdout) {
       if (stdoutRedirect) {
-        outputFile = await fs.open(stdoutRedirect, 'w');
+        outputFile = await fs.open(stdoutRedirect, isAppend ? 'a' : 'w');
 
         child.stdout.on('data', (chunk) => {
-          outputFile?.write(chunk);
+          if (isAppend) {
+            outputFile?.appendFile(chunk);
+          } else {
+            outputFile?.write(chunk);
+          }
         });
 
       } else {
@@ -306,10 +324,14 @@ const runExternalCommand = async (
 
     if (child.stderr) {
       if (stderrRedirect) {
-        errOutputFile = await fs.open(stderrRedirect, 'w');
+        errOutputFile = await fs.open(stderrRedirect, isAppend ? 'a' : 'w');
 
         child.stderr.on('data', (chunk) => {
-          errOutputFile?.write(chunk);
+          if (isAppend) {
+            errOutputFile?.appendFile(chunk);
+          } else {
+            errOutputFile?.write(chunk);
+          }
         });
 
       } else {
