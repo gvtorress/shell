@@ -162,8 +162,8 @@ const commandParser = (input: string): parsedInput => {
 
         if (char === '>') {
           isAppend = input[i - 1] === '>';
-          isStdoutRedirect = current === '1' || current === '';
-          isStderrRedirect = current === '2';
+          isStdoutRedirect = !isStderrRedirect && (current === '1' || current === '');
+          isStderrRedirect = isStderrRedirect || current === '2';
 
           if (current.length >= 2) args.push(current);
 
