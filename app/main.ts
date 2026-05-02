@@ -142,6 +142,8 @@ class ShellLineEditor implements ShellLineEditorInterface {
         this.output.write(completion);
         return;
       };
+
+      this.output.write('\x07');
     }
   }
 
