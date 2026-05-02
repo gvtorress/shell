@@ -27,6 +27,8 @@ class ShellLineEditor implements ShellLineEditorInterface {
   onSubmit: (input: string) => Promise<void>;
   _buffer: string = '';
   _cursor: number = 0;
+  private queue = Promise.resolve();
+  private lastWasCR = false;
 
   constructor({
     input, output, promptLabel, onSubmit,
@@ -38,8 +40,10 @@ class ShellLineEditor implements ShellLineEditorInterface {
   };
 
   start = () => {
-    this.input.on('data', this.handleKey);
-  }
+    this.input.on('data', (chunk) => {
+      this.queue = this.queue.then(() => this.handleKey(chunk));
+    });
+  };
 
   prompt = () => {
     this._buffer = '';
@@ -67,7 +71,14 @@ class ShellLineEditor implements ShellLineEditorInterface {
     }
 
     // enter
+    if (key === '\n' && this.lastWasCR) {
+      this.lastWasCR = false;
+      return;
+    }
+
     if (key === '\r' || key === '\n') {
+      this.lastWasCR = key === '\r';
+
       const line = this._buffer;
       this.output.write('\n');
       this._buffer = '';
@@ -75,6 +86,8 @@ class ShellLineEditor implements ShellLineEditorInterface {
       await this.onSubmit(line);
       return;
     }
+
+  this.lastWasCR = false;
 
     // tab
     if (key === '\t') {
@@ -201,7 +214,7 @@ const executeCommand = async (input: string) => {
       writeStdErr(`${command}: command not found\n`, isAppend, stderrRedirect);
       return;
     } else {
-      editor.pause();
+      // editor.pause();
       if (process.stdin.isTTY) process.stdin.setRawMode(false);
 
       try {
@@ -213,7 +226,7 @@ const executeCommand = async (input: string) => {
         }
 
         if (process.stdin.isTTY) process.stdin.setRawMode(true);
-        editor.resume();
+        // editor.resume();
       }
       return;
     }
@@ -451,74 +464,50 @@ const runExternalCommand = async (
   stdoutRedirect?: string,
   stderrRedirect?: string,
 ): Promise<void> => {
-  let outputFile: fs.FileHandle | undefined;
-  let errOutputFile: fs.FileHandle | undefined;
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
 
-  try {
-    const child = ChildProcess.spawn(commandPath, args, {
-      argv0: command,
-      stdio: ['inherit', 'pipe', 'pipe'],
-    });
+  const child = ChildProcess.spawn(commandPath, args, {
+    argv0: command,
+    stdio: ['inherit', 'pipe', 'pipe'],
+  });
 
-    if (child.stdout) {
-      if (stdoutRedirect) {
-        try {
-          outputFile = await fs.open(stdoutRedirect, isAppend ? 'a' : 'w');
+  child.stdout?.on('data', (chunk) => {
+    stdoutChunks.push(Buffer.from(chunk));
+  });
 
-          child.stdout.on('data', (chunk) => {
-            if (isAppend) {
-              outputFile?.appendFile(chunk);
-            } else {
-              outputFile?.write(chunk);
-            }
-          });
-        } catch (err) {
-          if (!(isErrnoException(err) && err.code === "ENOENT")) {
-            if (err instanceof Error) throw new Error(err.message);
-            throw new Error("Erro desconhecido");
-          }
-        }
-      } else {
-        child.stdout.on('data', (chunk) => {
-          process.stdout.write(chunk);
-          updateTerminalLineState(chunk);
-        });
-      }
+  child.stderr?.on('data', (chunk) => {
+    stderrChunks.push(Buffer.from(chunk));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', () => resolve());
+  });
+
+  const stdoutContent = Buffer.concat(stdoutChunks);
+  const stderrContent = Buffer.concat(stderrChunks);
+
+  if (stdoutRedirect) {
+    if (isAppend) {
+      await fs.appendFile(stdoutRedirect, stdoutContent);
+    } else {
+      await fs.writeFile(stdoutRedirect, stdoutContent);
     }
+  } else if (stdoutContent.length > 0) {
+    process.stdout.write(stdoutContent);
+    updateTerminalLineState(stdoutContent);
+  }
 
-    if (child.stderr) {
-      if (stderrRedirect) {
-        try {
-          errOutputFile = await fs.open(stderrRedirect, isAppend ? 'a' : 'w');
-
-          child.stderr.on('data', (chunk) => {
-            if (isAppend) {
-              errOutputFile?.appendFile(chunk);
-            } else {
-              errOutputFile?.write(chunk);
-            }
-          });
-        } catch (err) {
-          if (!(isErrnoException(err) && err.code === "ENOENT")) {
-            if (err instanceof Error) throw new Error(err.message);
-            throw new Error("Erro desconhecido");
-          }
-        }
-      } else {
-        child.stderr.on('data', (chunk) => {
-          process.stderr.write(chunk);
-          updateTerminalLineState(chunk);
-        });
-      }
+  if (stderrRedirect) {
+    if (isAppend) {
+      await fs.appendFile(stderrRedirect, stderrContent);
+    } else {
+      await fs.writeFile(stderrRedirect, stderrContent);
     }
-
-    await new Promise<void>((resolve, reject) => {
-      child.on('error', reject);
-      child.on('close', () => resolve());
-    });
-  } finally {
-    await outputFile?.close();
-    await errOutputFile?.close();
+  } else if (stderrContent.length > 0) {
+    process.stderr.write(stderrContent);
+    updateTerminalLineState(stderrContent);
   }
 }
 
