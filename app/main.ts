@@ -125,25 +125,19 @@ class ShellLineEditor implements ShellLineEditorInterface {
     if (prefix.length >= 2) {
       let word = '';
       let completion = '';
-      if ('exit'.includes(prefix)) {
-        word = 'exit';
-        completion = word.slice(prefix.length) + ' ';
-        this._buffer += completion;
-        this._cursor += completion.length;
-        this.output.write(completion);
-        return;
-      };
+      let matches = commandList.filter((command) => command.startsWith(prefix));
 
-      if ('echo'.includes(prefix)) {
-        word = 'echo';
-        completion = word.slice(prefix.length) + ' ';
-        this._buffer += completion;
-        this._cursor += completion.length
-        this.output.write(completion);
+      if (matches.length === 0) {
+        this.output.write('\x07');
         return;
-      };
+      }
 
-      this.output.write('\x07');
+      word = matches[0];
+      completion = word.slice(prefix.length) + ' ';
+      this._buffer += completion;
+      this._cursor += completion.length;
+      this.output.write(completion);
+      return;
     }
   }
 
@@ -161,6 +155,21 @@ class ShellLineEditor implements ShellLineEditorInterface {
     process.stdin.resume();
   }
 }
+
+const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd', 'cd']);
+const paths = process.env.PATH?.split(path.delimiter) || '';
+let externalCommands: Set<string> = new Set([]);
+for (let path of paths) {
+  try {
+    const files = await fs.readdir(path);
+    externalCommands = new Set([...externalCommands, ...files]);
+  } catch (err) {
+    continue;
+  }
+}
+const commandList = [...builtinFunctions, ...externalCommands];
+const home = os.homedir();
+let terminalEndsWithNewline = true;
 
 const initializeTerminal = () => {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
@@ -278,11 +287,6 @@ const executeCommand = async (input: string) => {
     }
   }
 }
-
-const builtinFunctions = new Set(['exit', 'echo', 'type', 'pwd', 'cd']);
-const paths = process.env.PATH?.split(path.delimiter) || '';
-const home = os.homedir();
-let terminalEndsWithNewline = true;
 
 const findPath = async (command: string): Promise<string | undefined> => {
   for (const commandPath of paths) {
@@ -491,22 +495,26 @@ const runExternalCommand = async (
   const stderrContent = Buffer.concat(stderrChunks);
 
   if (stdoutRedirect) {
-    if (isAppend) {
-      await fs.appendFile(stdoutRedirect, stdoutContent);
-    } else {
-      await fs.writeFile(stdoutRedirect, stdoutContent);
-    }
+    try {
+      if (isAppend) {
+        await fs.appendFile(stdoutRedirect, stdoutContent);
+      } else {
+        await fs.writeFile(stdoutRedirect, stdoutContent);
+      }
+    } catch {}
   } else if (stdoutContent.length > 0) {
     process.stdout.write(stdoutContent);
     updateTerminalLineState(stdoutContent);
   }
 
   if (stderrRedirect) {
-    if (isAppend) {
-      await fs.appendFile(stderrRedirect, stderrContent);
-    } else {
-      await fs.writeFile(stderrRedirect, stderrContent);
-    }
+    try {
+      if (isAppend) {
+        await fs.appendFile(stderrRedirect, stderrContent);
+      } else {
+        await fs.writeFile(stderrRedirect, stderrContent);
+      }
+    } catch {}
   } else if (stderrContent.length > 0) {
     process.stderr.write(stderrContent);
     updateTerminalLineState(stderrContent);
